@@ -1,0 +1,129 @@
+image: node:12.16.0
+options:
+  docker: true
+
+definitions:
+  caches:
+    nodecustom: ./node_modules
+    yarn: /usr/local/share/.cache/yarn
+
+  steps: 
+    - step: &build-test
+        name: Build and Test
+        #caches:
+        #  - nodecustom
+        #  - yarn
+        script:
+          - echo "Building and Testing"
+          - yarn install
+          - yarn test
+
+    - step: &build-image-deploy  
+        name: Build Image and Upload to GCR
+        image: google/cloud-sdk:latest
+        caches:
+          - docker
+        script:   
+          - echo "Building Image and Uploading to GCR"
+
+          # Set the Image name
+          - export IMAGE_NAME=eu.gcr.io/[PROJECT-ID]/[APP-NAME]:$BITBUCKET_BUILD_NUMBER
+
+          # Build the Image
+          - docker build -t [APP-NAME] .
+
+          # Tag the Image
+          - docker tag [APP-NAME] $IMAGE_NAME
+
+          - if [ $BITBUCKET_BRANCH == 'master' ]; then docker tag [APP-NAME] $PRODUCTION_IMAGE; fi
+
+          - if [[ $BITBUCKET_TAG =~ "test" ]]; then docker tag [APP-NAME] $TEST_IMAGE; fi
+
+          - if [[ $BITBUCKET_TAG =~ "staging" ]]; then docker tag [APP-NAME] $STAGING_IMAGE; fi
+
+          # Decode Repository gcloud key
+          - echo $GCLOUD_API_KEYFILE | base64 --decode --ignore-garbage > ./gcloud-api-key.json
+
+          # Authenticate with the gcloud key
+          - gcloud auth activate-service-account --key-file=gcloud-api-key.json
+
+          # Config the Image registry with gcloud helper
+          - gcloud auth configure-docker -q
+
+          # Push the Image to GCR
+          - docker push $IMAGE_NAME
+
+          - if [ $BITBUCKET_BRANCH == 'master' ]; then docker push $PRODUCTION_IMAGE; fi
+
+          - if [[ $BITBUCKET_TAG =~ "test" ]]; then docker push $TEST_IMAGE; fi
+
+          - if [[ $BITBUCKET_TAG =~ "staging" ]]; then docker push $STAGING_IMAGE; fi
+
+    - step: &deploy-gke
+        name: Deploy to GKE
+        image: google/cloud-sdk:latest
+        deployment: production
+        script:
+          - echo "Deploying to GKE"
+
+          # Set the Image name
+          - export IMAGE_NAME=eu.gcr.io/[PROJECT-ID]/[APP-NAME]:$BITBUCKET_BUILD_NUMBER
+
+          # Decode Repository gcloud key
+          - echo $GCLOUD_API_KEYFILE | base64 --decode --ignore-garbage > ./gcloud-api-key.json
+
+          # Authenticate with the gcloud key
+          - gcloud auth activate-service-account --key-file=gcloud-api-key.json
+
+          # Rolling update to production cluster  
+          - if [ $BITBUCKET_BRANCH == 'master' ]; then 
+          
+          # Authenticate to cluster and rollout
+          - gcloud container clusters get-credentials [CLUSTER-NAME]-production --zone europe-west1-d --project [PROJECT-ID]
+                    
+          - kubectl set image deployment/[DEPLOYMENT-NAME] [APP-NAME]=$IMAGE_NAME; 
+          
+          - fi
+
+          - if [[ $BITBUCKET_TAG =~ "test" ]]; then
+          
+          # Authenticate to cluster and rollout
+          - gcloud container clusters get-credentials [CLUSTER-NAME]-test-staging --zone europe-west1-d --project [PROJECT-ID]
+          
+          - kubectl set image deployment/[DEPLOYMENT-NAME] [APP-NAME]=$IMAGE_NAME -n test; 
+          
+          - fi
+
+          - if [[ $BITBUCKET_TAG =~ "staging" ]]; then 
+          
+          # Authenticate to cluster and rollout
+          - gcloud container clusters get-credentials [CLUSTER-NAME]-test-staging --zone europe-west1-d --project [PROJECT-ID]
+          
+          - kubectl set image deployment/[DEPLOYMENT-NAME] [APP-NAME]=$IMAGE_NAME -n staging; 
+          
+          - fi
+
+          - echo "Deployment complete"
+
+pipelines:
+  branches:
+    master: 
+      - step: *build-test
+      - step: *build-image-deploy
+      - step: *deploy-gke
+
+  tags:    
+
+    'test-*': 
+      - step: *build-test
+      - step: *build-image-deploy
+      - step: 
+          <<: *deploy-gke
+          deployment: test
+
+    'staging-*': 
+      - step: *build-test
+      - step: *build-image-deploy
+      - step: 
+          <<: *deploy-gke
+          deployment: staging
