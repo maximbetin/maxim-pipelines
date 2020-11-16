@@ -81,7 +81,7 @@ definitions:
           # Authenticate to cluster and rollout
           - gcloud container clusters get-credentials [CLUSTER-NAME]-production --zone europe-west1-d --project [PROJECT-ID]
                     
-          - kubectl set image deployment/[DEPLOYMENT-NAME] [APP-NAME]=$IMAGE_NAME; 
+          - kubectl set image deployment/[DEPLOYMENT-NAME]-production [CONTAINER-NAME]=$IMAGE_NAME; 
           
           - fi
 
@@ -90,7 +90,7 @@ definitions:
           # Authenticate to cluster and rollout
           - gcloud container clusters get-credentials [CLUSTER-NAME]-test-staging --zone europe-west1-d --project [PROJECT-ID]
           
-          - kubectl set image deployment/[DEPLOYMENT-NAME] [APP-NAME]=$IMAGE_NAME -n test; 
+          - kubectl set image deployment/[DEPLOYMENT-NAME]-test [CONTAINER-NAME]=$IMAGE_NAME -n test; 
           
           - fi
 
@@ -99,7 +99,7 @@ definitions:
           # Authenticate to cluster and rollout
           - gcloud container clusters get-credentials [CLUSTER-NAME]-test-staging --zone europe-west1-d --project [PROJECT-ID]
           
-          - kubectl set image deployment/[DEPLOYMENT-NAME] [APP-NAME]=$IMAGE_NAME -n staging; 
+          - kubectl set image deployment/[DEPLOYMENT-NAME]-staging [CONTAINER-NAME]=$IMAGE_NAME -n staging; 
           
           - fi
 
