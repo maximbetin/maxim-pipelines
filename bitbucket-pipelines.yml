@@ -10,9 +10,6 @@ definitions:
   steps: 
     - step: &build-test
         name: Build and Test
-        #caches:
-        #  - nodecustom
-        #  - yarn
         script:
           - echo "Building and Testing"
           - yarn install
@@ -47,7 +44,7 @@ definitions:
           # Authenticate with the gcloud key
           - gcloud auth activate-service-account --key-file=gcloud-api-key.json
 
-          # Config the Image registry with gcloud helper
+          # Config the Image Registry with gcloud helper
           - gcloud auth configure-docker -q
 
           # Push the Image to GCR
