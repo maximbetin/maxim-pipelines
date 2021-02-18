@@ -1,4 +1,4 @@
-# Scrap data with Python to be executed in Windows' PS EXO and Azure module
+# Scrape data with Python to be executed in Windows' PS EXO and Azure module by sending it in a pipeline
 stages:
   - build-python3
   - build-powershell
