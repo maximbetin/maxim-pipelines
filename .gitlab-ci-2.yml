@@ -1,0 +1,158 @@
+# Poller-Executors architecture where the Executors take workload from the Poller. When a new Image of the Executor is created it is written to a file IMAGE_TAGS. 
+# This file is read from by the Poller in order to run these images.
+
+.container-build: &container-build 
+  image:
+    name: gcr.io/kaniko-project/executor:debug
+    entrypoint: [""]
+  script:
+    - /kaniko/executor
+      --context ${DOCKER_BUILD_CONTEXT_PATH}
+      --dockerfile ${DOCKERFILE_PATH}
+      --destination ${IMAGE_NAME}:${IMAGE_TAG}
+      ${DOCKER_BUILD_EXTRA_OPTS}
+
+# Start
+stages:
+- build-executors 
+- publish-executors
+- build-poller
+
+# Building script-1 (Python)
+build-script-1-image:
+  <<: *container-build
+  stage: build-executors
+  only: # If changes are made in this directory
+   refs:
+    - branches
+   changes:
+     - script-1/**/*
+  variables: 
+    DOCKER_BUILD_CONTEXT_PATH: ${CI_PROJECT_DIR}/script-1/docker/
+    DOCKERFILE_PATH: ${CI_PROJECT_DIR}/script-1/docker/Dockerfile
+    IMAGE_REGISTRY_HOST: ${CI_REGISTRY} 
+    IMAGE_REGISTRY_USER: gitlab-autocommiter # Token generated for the project
+    IMAGE_REGISTRY_PWD: ${gitlab_autocommiter_token} # Value stored in CI Variables
+    IMAGE_NAME: ${CI_REGISTRY_IMAGE}/script-1-image
+    IMAGE_TAG: ${CI_COMMIT_SHORT_SHA}
+  before_script: 
+    - cd script-1
+    - cp script_1.py docker/
+    - cp requirements.txt docker/
+
+
+# Building script-2 (Python)
+build-licensor-image:
+  <<: *container-build
+  stage: build-executors
+  only: # If changes are made in this directory
+   refs:
+    - branches
+   changes:
+     - script-2/**/*
+  variables: 
+    DOCKER_BUILD_CONTEXT_PATH: ${CI_PROJECT_DIR}/script-2/docker/
+    DOCKERFILE_PATH: ${CI_PROJECT_DIR}/script-2/docker/Dockerfile
+    IMAGE_REGISTRY_HOST: ${CI_REGISTRY} # required, docker registry host to authenticate against
+    IMAGE_REGISTRY_USER: ${CI_REGISTRY_USER} # required, user name (login) for docker registry
+    IMAGE_REGISTRY_PWD: ${CI_REGISTRY_PASSWORD} # required, user password for docker registry
+    IMAGE_NAME: ${CI_REGISTRY_IMAGE}/script-2-image
+    IMAGE_TAG: ${CI_COMMIT_SHORT_SHA}
+  before_script: 
+    - cd script-2
+    - sed -i s/passplaceholder/$PASSWORD/g script_2.py
+    - cp script_2.py docker/
+    - cp requirements.txt docker
+
+
+# Building script-3 (Bash)
+build-script-3-image:
+  <<: *container-build
+  stage: build-executors
+  only: # If changes are made in this directory
+   refs:
+    - branches
+   changes:
+     - script-3/**/* 
+  variables: 
+    DOCKER_BUILD_CONTEXT_PATH: ${CI_PROJECT_DIR}/script-3/docker/
+    DOCKERFILE_PATH: ${CI_PROJECT_DIR}/script-3/docker/Dockerfile
+    IMAGE_REGISTRY_HOST: ${CI_REGISTRY} 
+    IMAGE_REGISTRY_USER: gitlab-autocommiter # Token generated for the project
+    IMAGE_REGISTRY_PWD: ${gitlab_autocommiter_token} # Value stored in CI Variables
+    IMAGE_NAME: ${CI_REGISTRY_IMAGE}/script-3-image
+    IMAGE_TAG: ${CI_COMMIT_SHORT_SHA}
+  before_script: 
+    - cd script-3
+    - cp script_3.sh docker/
+    - sed -i s/USERNAME/$AZ_SP_USERNAME/g ./docker/Dockerfile 
+    - sed -i s/PASSWORD/$AZ_SP_PASSWORD/g ./docker/Dockerfile 
+
+
+# Publishing changes to poller
+publish-to-poller-image:
+  stage: publish-executors
+  image: alpine/git
+  only:
+   refs:
+    - branches
+   changes: # In any folder but the Poller's
+     - script-1/**/*
+     - script-1/**/*
+     - script-1/**/* 
+  script: 
+    - git config --global user.email "gitlab-autocommiter@gitlab.com"
+    - git config --global user.name "Gitlab pipeline itself"
+    - git clone https://gitlab-autocommiter:${gitlab_autocommiter_token}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git
+    - echo "Which images have changed?"
+    - git diff --name-only $CI_COMMIT_BEFORE_SHA $CI_COMMIT_SHA
+    - echo "------"
+    # Modify tag for the images that have changed
+    # If changes in script-1
+    - > 
+      if [ -n  "$(git diff --name-only $CI_COMMIT_BEFORE_SHA $CI_COMMIT_SHA | grep script-1)" ]; then
+        sed -i s/^script-1-tag=.*/script-1-tag\=${CI_COMMIT_SHORT_SHA}/g script-1/IMAGE_TAGS 
+      fi
+    # If changes in script-2
+    - > 
+      if [ -n  "$(git diff --name-only $CI_COMMIT_BEFORE_SHA $CI_COMMIT_SHA | grep script-2)" ]; then 
+        sed -i s/^script-2-tag=.*/script-2-tag\=${CI_COMMIT_SHORT_SHA}/g script-2/IMAGE_TAGS ;
+      fi
+    # If changes in script-3
+    - >
+      if [ -n  "$(git diff --name-only $CI_COMMIT_BEFORE_SHA $CI_COMMIT_SHA | grep script-3)" ]; then 
+        sed -i s/^script-3-tag=.*/script-3-tag\=${CI_COMMIT_SHORT_SHA}/g script-3/IMAGE_TAGS 
+      fi
+    # Show content of modified file
+    - echo "File to be pushed:"
+    - cat poller/IMAGE_TAGS
+    - echo "----"
+    - git add poller/IMAGE_TAGS && git commit -m "Updated image in Poller's variable file for ${CI_JOB_NAME}"
+    - git remote set-url origin https://gitlab-autocommiter:${gitlab_autocommiter_token}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git
+    - git push origin HEAD:master
+
+
+# Building poller
+# Every time an implementator image is built, we need to rebuild the poller including the new tags for
+# the new implementators' docker images
+build-poller-image:
+  <<: *container-build
+  stage: build-poller
+  only:
+   refs:
+    - branches
+   changes:
+     - poller/**/*
+  variables: 
+    DOCKER_BUILD_CONTEXT_PATH: ${CI_PROJECT_DIR}/poller/docker/
+    DOCKERFILE_PATH: ${CI_PROJECT_DIR}/poller/docker/Dockerfile
+    IMAGE_REGISTRY_HOST: ${CI_REGISTRY} 
+    IMAGE_REGISTRY_USER: gitlab-autocommiter # Token generated for the project
+    IMAGE_REGISTRY_PWD: ${gitlab_autocommiter_token} # Value stored in CI Variables
+    IMAGE_NAME: ${CI_REGISTRY_IMAGE}/poller-image
+    IMAGE_TAG: ${CI_COMMIT_SHORT_SHA}
+  before_script: 
+    - cd poller
+    - cp requirements.txt docker/
+    - cp poller.py docker/
+    - cp IMAGE_TAGS docker/
